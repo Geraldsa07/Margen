@@ -130,7 +130,7 @@ function guessCat(name){
 }
 
 /* ---------- datos ---------- */
-const def=()=>({v:1,accounts:[],expenses:[],snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',lastBackup:null}});
+const def=()=>({v:1,accounts:[],expenses:[],transfers:[],cardMap:{},snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',mainAcc:'',lastBackup:null}});
 function load(){
   try{const r=localStorage.getItem(KEY);if(r){const o=JSON.parse(r);const d=def();return Object.assign(d,o,{settings:Object.assign(d.settings,o.settings||{})})}}catch(e){}
   return def();
@@ -177,6 +177,44 @@ function applyExp(e,sign){
   const a=S.accounts.find(q=>q.id===e.accId);if(!a)return;
   const v=convert(e.amount,e.cur,a.cur);
   a.balance=round2(a.balance+(TYPES[a.type].debt?1:-1)*sign*v);
+}
+/* ---------- recargas entre cuentas ---------- */
+function applyTransfer(t,sign){
+  const from=S.accounts.find(a=>a.id===t.from),to=S.accounts.find(a=>a.id===t.to);
+  if(from)from.balance=round2(from.balance-sign*convert(t.amount,t.cur,from.cur));
+  if(to)to.balance=round2(to.balance+(TYPES[to.type].debt?-1:1)*sign*convert(t.amount,t.cur,to.cur));
+}
+function transferSheet(){
+  if(S.accounts.length<2){toast('Necesitas al menos 2 cuentas');return}
+  const asset=S.accounts.filter(a=>!TYPES[a.type].debt);
+  if(!asset.length){toast('Necesitas una cuenta de la que salga el dinero');return}
+  const from=asset.find(a=>a.id===S.settings.mainAcc)||asset[0];
+  const to=S.accounts.find(a=>a.id!==from.id&&!TYPES[a.type].debt)||S.accounts.find(a=>a.id!==from.id);
+  D={};
+  let h='<h3>Recargar o transferir</h3>';
+  if(!S.settings.mainAcc)h+='<p class="small mut" style="margin-top:-4px">Tip: marca tu cuenta principal (BP) en su ficha, y aquí saldrá elegida sola.</p>';
+  h+=field('Desde (sale el dinero)','<select id="t-from">'+asset.map(a=>'<option value="'+a.id+'"'+(a.id===from.id?' selected':'')+'>'+esc(TYPES[a.type].i+' '+a.name)+'</option>').join('')+'</select>');
+  h+=field('Hacia (recibe el dinero)','<select id="t-to">'+S.accounts.map(a=>'<option value="'+a.id+'"'+(a.id===to.id?' selected':'')+'>'+esc(TYPES[a.type].i+' '+a.name)+'</option>').join('')+'</select>');
+  h+=field('<span id="t-lab"></span>','<input type="text" id="t-amt" class="amtin" inputmode="decimal" placeholder="0">');
+  h+='<p class="small mut" id="t-note" style="margin-top:-6px"></p>';
+  h+=field('Fecha','<input type="date" id="t-date" value="'+today()+'">');
+  h+='<button class="btn" data-a="saveTransfer">Guardar</button><button class="btn sec" data-a="closeSheet">Cancelar</button>';
+  openSheet(h);syncTransfer();
+  setTimeout(()=>{const i=$('#t-amt');i&&i.focus()},50);
+}
+function syncTransfer(){
+  const to=S.accounts.find(a=>a.id===$('#t-to').value);if(!to)return;
+  $('#t-lab').textContent='Monto en '+(to.cur==='USD'?'dólares ($)':'colones (₡)');
+  $('#t-note').textContent=TYPES[to.type].debt?'Es una deuda: el pago baja lo que debes.':'';
+}
+function saveTransfer(){
+  const from=S.accounts.find(a=>a.id===$('#t-from').value),to=S.accounts.find(a=>a.id===$('#t-to').value);
+  const amt=parseAmount($('#t-amt').value);
+  if(!from||!to||from.id===to.id){toast('Elige dos cuentas distintas');return}
+  if(!(amt>0)){toast('Escribe un monto mayor a 0');return}
+  const t={id:uid(),date:$('#t-date').value||today(),from:from.id,to:to.id,amount:round2(amt),cur:to.cur};
+  applyTransfer(t,1);S.transfers.push(t);
+  save();closeSheet();render();toast('Listo: '+fmt(t.amount,t.cur)+' de '+from.name+' a '+to.name);
 }
 function nextDue(a){
   if(!TYPES[a.type].debt||!a.dia||!(a.cuota>0)||a.balance<=0)return null;
@@ -290,12 +328,19 @@ function vAcc(){
   const as=S.accounts.filter(a=>!TYPES[a.type].debt),ds=S.accounts.filter(a=>TYPES[a.type].debt),t=totals();
   const row=a=>{
     const n=nextDue(a);
-    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(a.balance,a.cur)+'</div></div>';
+    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+(a.id===S.settings.mainAcc?'⭐ Principal · ':'')+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(a.balance,a.cur)+'</div></div>';
   };
-  let h='<div class="row"><h1>Cuentas</h1><button class="chip on" data-a="newAcc" style="margin-bottom:14px">+ Agregar</button></div>';
+  let h='<div class="row"><h1>Cuentas</h1><div style="display:flex;gap:6px;margin-bottom:14px"><button class="chip" data-a="transfer">↔ Recargar</button><button class="chip on" data-a="newAcc">+ Agregar</button></div></div>';
   if(!S.accounts.length)return h+'<div class="card empty mut">Aún no hay cuentas.</div>';
   h+='<div class="card"><div class="row"><h2 style="margin:0">Activos</h2><b class="good">'+money(t.a)+'</b></div>'+(as.length?as.map(row).join(''):'<p class="mut small">Sin activos.</p>')+'</div>';
   h+='<div class="card"><div class="row"><h2 style="margin:0">Deudas</h2><b class="bad">'+money(t.d)+'</b></div>'+(ds.length?ds.map(row).join(''):'<p class="mut small">Sin deudas. 🎉</p>')+'</div>';
+  const tr=S.transfers.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id)).slice(0,6);
+  if(tr.length){
+    h+='<div class="card"><h2>Recargas y transferencias</h2>'+tr.map(t=>{
+      const f=S.accounts.find(a=>a.id===t.from),o=S.accounts.find(a=>a.id===t.to);
+      return '<div class="item" data-a="delTransfer" data-id="'+t.id+'"><div class="ico">↔️</div><div class="grow"><b>'+esc(f?f.name:'?')+' → '+esc(o?o.name:'?')+'</b><span class="small mut">'+fmtDate(t.date)+'</span></div><div class="amt">'+fmt(t.amount,t.cur)+'</div></div>';
+    }).join('')+'<p class="mut small" style="margin:8px 0 0">Toca una para deshacerla.</p></div>';
+  }
   h+='<p class="mut small">Las inversiones no se actualizan solas: toca la cuenta y cambia su valor cuando quieras.</p>';
   return h;
 }
@@ -328,9 +373,10 @@ function accOptions(sel,withNone){
 }
 function expenseSheet(e,pre){
   const p=Object.assign({},pre||{}),catSet=!!p.catSet;delete p.catSet;
+  const card=p.card||'';delete p.card;
   const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||(S.accounts.find(a=>!TYPES[a.type].debt)||{}).id||'',rec:false},e?clone(e):{},p);
   if(!S.accounts.find(a=>a.id===x.accId))x.accId='';
-  D={x,orig:e?clone(e):null,catManual:!!e||catSet};
+  D={x,orig:e?clone(e):null,catManual:!!e||catSet,card};
   const fr=Object.entries(S.merchants).sort((a,b)=>b[1].n-a[1].n).slice(0,6);
   let h='<h3>'+(e?'Editar gasto':'Nuevo gasto')+'</h3>';
   h+=field('Importe','<input type="text" id="x-amt" class="amtin" inputmode="decimal" placeholder="0" value="'+esc(x.amount)+'">');
@@ -341,6 +387,7 @@ function expenseSheet(e,pre){
   }
   h+=field('Categoría','<div class="chips" id="x-cats">'+Object.entries(CATS).map(([k,c])=>'<button class="chip cc'+(x.cat===k?' on':'')+'" data-a="setCat" data-c="'+k+'">'+c.i+' '+c.n+'</button>').join('')+'</div>');
   h+=field('Cuenta','<select id="x-acc">'+accOptions(x.accId,true)+'</select>');
+  if(card&&!x.accId)h+='<p class="small warn" style="margin:-4px 0 12px">No reconocí la tarjeta «'+esc(card)+'». Elige la cuenta y la próxima vez la recuerdo.</p>';
   h+=field('Fecha','<input type="date" id="x-date" value="'+esc(x.date)+'">');
   h+='<div class="sw"><div><b>Gasto recurrente</b><div class="small mut">Nómina, alquiler, suscripciones…</div></div><input type="checkbox" id="x-rec"'+(x.rec?' checked':'')+'></div>';
   h+='<button class="btn" data-a="saveExp">Guardar</button>';
@@ -358,6 +405,8 @@ function saveExp(){
   if(!(amt>0)){toast('Escribe un importe mayor a 0');return}
   x.amount=amt;x.desc=$('#x-desc').value.trim()||CATS[x.cat].n;
   x.date=$('#x-date').value||today();x.accId=$('#x-acc').value;x.rec=$('#x-rec').checked;
+  if(!x.accId&&S.accounts.length&&!confirm('Sin cuenta no se descuenta de ningún saldo. ¿Guardar así?'))return;
+  if(D.card&&x.accId)S.cardMap[norm(D.card)]=x.accId;
   if(D.orig)applyExp(D.orig,-1);
   applyExp(x,1);
   const i=S.expenses.findIndex(q=>q.id===x.id);
@@ -377,6 +426,7 @@ function accountSheet(a){
   h+=field('Moneda','<select id="a-cur"><option value="CRC"'+(x.cur==='CRC'?' selected':'')+'>Colones (₡)</option><option value="USD"'+(x.cur==='USD'?' selected':'')+'>Dólares ($)</option></select>');
   h+=field('<span id="a-ballabel"></span>','<input type="text" id="a-bal" inputmode="decimal" value="'+esc(x.balance)+'" placeholder="0">');
   h+='<div id="a-debt"><div class="field"><label>Cuota o pago mensual</label><input type="text" id="a-cuota" inputmode="decimal" value="'+esc(x.cuota)+'" placeholder="0"></div><div class="field"><label>Día del mes en que se paga (1-31)</label><input type="text" id="a-dia" inputmode="numeric" value="'+esc(x.dia)+'" placeholder="Ej. 15"></div></div>';
+  h+='<div class="sw" id="a-main"><div><b>Es mi cuenta principal</b><div class="small mut">De aquí sale el dinero al recargar las otras</div></div><input type="checkbox" id="a-ismain"'+(S.settings.mainAcc===x.id?' checked':'')+'></div>';
   h+='<button class="btn" data-a="saveAcc">Guardar</button>';
   if(a)h+='<button class="btn del" data-a="delAcc">Eliminar cuenta</button>';
   h+='<button class="btn sec" data-a="closeSheet">Cancelar</button>';
@@ -386,6 +436,7 @@ function syncAccType(){
   const t=$('#a-type');if(!t)return;
   const debt=TYPES[t.value].debt;
   $('#a-debt').style.display=debt?'':'none';
+  $('#a-main').style.display=debt?'none':'';
   $('#a-ballabel').textContent=debt?'Saldo que debes':t.value==='inversion'?'Valor actual':'Saldo actual';
 }
 function saveAcc(){
@@ -399,6 +450,9 @@ function saveAcc(){
   }else{x.cuota='';x.dia=''}
   const i=S.accounts.findIndex(q=>q.id===x.id);
   if(i>-1){x.paidMonth=S.accounts[i].paidMonth;S.accounts[i]=x}else S.accounts.push(x);
+  const mc=$('#a-ismain');
+  if(!TYPES[x.type].debt&&mc&&mc.checked)S.settings.mainAcc=x.id;
+  else if(S.settings.mainAcc===x.id)S.settings.mainAcc='';
   save();closeSheet();render();toast('Cuenta guardada');
 }
 function paySheet(id){
@@ -444,6 +498,13 @@ const A={
   addExp:()=>expenseSheet(),
   editExp:t=>{const e=S.expenses.find(q=>q.id===t.dataset.id);if(e)expenseSheet(e)},
   newAcc:()=>accountSheet(),
+  transfer:()=>transferSheet(),
+  saveTransfer,
+  delTransfer:t=>{
+    const x=S.transfers.find(q=>q.id===t.dataset.id);
+    if(!x||!confirm('¿Deshacer esta transferencia? El dinero vuelve a la cuenta de origen.'))return;
+    applyTransfer(x,-1);S.transfers=S.transfers.filter(q=>q.id!==x.id);save();render();toast('Transferencia deshecha');
+  },
   editAcc:t=>{const a=S.accounts.find(q=>q.id===t.dataset.id);if(a)accountSheet(a)},
   payDebt:t=>paySheet(t.dataset.id),
   toggleShow:()=>{S.settings.show=showCur()==='CRC'?'USD':'CRC';save();render()},
@@ -466,6 +527,8 @@ const A={
   delAcc:()=>{
     if(!confirm('¿Eliminar esta cuenta? Los gastos ligados se quedan sin cuenta.'))return;
     S.accounts=S.accounts.filter(q=>q.id!==D.x.id);
+    S.transfers=S.transfers.filter(t=>t.from!==D.x.id&&t.to!==D.x.id);
+    if(S.settings.mainAcc===D.x.id)S.settings.mainAcc='';
     S.expenses.forEach(e=>{if(e.accId===D.x.id)e.accId=''});
     save();closeSheet();render();toast('Cuenta eliminada');
   },
@@ -493,6 +556,7 @@ document.addEventListener('input',e=>{
 });
 document.addEventListener('change',e=>{
   if(e.target.id==='a-type')syncAccType();
+  if(e.target.id==='t-to')syncTransfer();
   const k=e.target.dataset&&e.target.dataset.s;
   if(k==='rate'){const v=parseAmount(e.target.value);if(v>0){S.settings.rate=v;save();toast('Tipo de cambio guardado')}else{e.target.value=S.settings.rate}}
   if(k==='cur'){S.settings.cur=e.target.value;save()}
@@ -515,9 +579,14 @@ function fromUrl(){
   const k=norm(desc),m=S.merchants[k];
   if(m){if(!pre.cat){pre.cat=m.cat;pre.catSet=true}if(!pre.cur&&pre.amount==null)pre.cur=m.cur}
   const q=norm(cu);
-  let acc=q&&S.accounts.find(a=>norm(a.name)===q)||q&&S.accounts.find(a=>norm(a.name).includes(q)||q.includes(norm(a.name)));
-  if(!acc&&m&&S.accounts.find(a=>a.id===m.acc))acc=S.accounts.find(a=>a.id===m.acc);
-  if(acc)pre.accId=acc.id;
+  if(q){
+    pre.card=cu;
+    let acc=S.accounts.find(a=>a.id===S.cardMap[q]);
+    if(!acc){
+      acc=S.accounts.filter(a=>{const n=norm(a.name);return n&&(n===q||q.includes(n)||n.includes(q))}).sort((a,b)=>b.name.length-a.name.length)[0];
+    }
+    pre.accId=acc?acc.id:'';
+  }else if(m&&S.accounts.find(a=>a.id===m.acc))pre.accId=m.acc;
   try{history.replaceState(null,'',location.pathname)}catch(e){}
   expenseSheet(null,pre);
 }
