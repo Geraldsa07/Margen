@@ -273,13 +273,15 @@ function vExp(){
   const list=monthExp(expMonth).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
   const tot=monthTotal(expMonth);
   let h='<h1>Gastos</h1><div class="card"><div class="row"><button class="chip" data-a="mPrev">‹</button><b style="text-transform:capitalize">'+monthName(expMonth)+'</b><button class="chip" data-a="mNext">›</button></div><div class="big" style="font-size:28px;text-align:center;margin:10px 0 0">'+money(tot)+'</div></div>';
+  const huerf=S.expenses.filter(e=>!S.accounts.find(a=>a.id===e.accId)).length;
+  if(huerf)h+='<div class="card" style="background:var(--soft)"><b>⚠️ '+huerf+(huerf===1?' gasto está':' gastos están')+' sin cuenta</b><p class="mut small" style="margin:4px 0 0">No restan del patrimonio. Toca el gasto, elige la cuenta y guarda.</p></div>';
   if(!list.length)return h+'<div class="card empty mut">No hay gastos en este mes.<br>Toca el botón + para agregar uno.</div>';
   let cur='';
   h+='<div class="card">';
   list.forEach(e=>{
     if(e.date!==cur){cur=e.date;h+='<div class="small mut" style="margin:12px 0 2px;font-weight:600;text-transform:capitalize">'+dayLabel(e.date)+'</div>'}
     const a=S.accounts.find(q=>q.id===e.accId);
-    h+='<div class="item" data-a="editExp" data-id="'+e.id+'"><div class="ico">'+CATS[e.cat].i+'</div><div class="grow"><b>'+esc(e.desc)+'</b><span class="small mut">'+esc(CATS[e.cat].n)+(a?' · '+esc(a.name):'')+(e.rec?' · 🔁':'')+'</span></div><div class="amt">'+fmt(e.amount,e.cur)+'</div></div>';
+    h+='<div class="item" data-a="editExp" data-id="'+e.id+'"><div class="ico">'+CATS[e.cat].i+'</div><div class="grow"><b>'+esc(e.desc)+'</b><span class="small mut">'+esc(CATS[e.cat].n)+(a?' · '+esc(a.name):' · ⚠️ sin cuenta')+(e.rec?' · 🔁':'')+'</span></div><div class="amt">'+fmt(e.amount,e.cur)+'</div></div>';
   });
   return h+'</div>';
 }
@@ -326,7 +328,7 @@ function accOptions(sel,withNone){
 }
 function expenseSheet(e,pre){
   const p=Object.assign({},pre||{}),catSet=!!p.catSet;delete p.catSet;
-  const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||'',rec:false},e?clone(e):{},p);
+  const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||(S.accounts.find(a=>!TYPES[a.type].debt)||{}).id||'',rec:false},e?clone(e):{},p);
   if(!S.accounts.find(a=>a.id===x.accId))x.accId='';
   D={x,orig:e?clone(e):null,catManual:!!e||catSet};
   const fr=Object.entries(S.merchants).sort((a,b)=>b[1].n-a[1].n).slice(0,6);
@@ -362,7 +364,7 @@ function saveExp(){
   if(i>-1)S.expenses[i]=x;else S.expenses.push(x);
   const k=norm(x.desc),m=S.merchants[k]||{n:0};
   S.merchants[k]={name:x.desc,cat:x.cat,acc:x.accId,amt:x.amount,cur:x.cur,n:m.n+1};
-  S.settings.lastAcc=x.accId;S.settings.cur=x.cur;
+  if(x.accId)S.settings.lastAcc=x.accId;S.settings.cur=x.cur;
   expMonth=x.date.slice(0,7)<=today().slice(0,7)?x.date.slice(0,7):expMonth;
   save();closeSheet();render();toast('Gasto guardado');
 }
