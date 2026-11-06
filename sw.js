@@ -1,4 +1,4 @@
-const CACHE = 'mi-margen-v5';
+const CACHE = 'mi-margen-v7';
 const FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './icon-180.png'];
 
 self.addEventListener('install', e => {

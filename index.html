@@ -400,11 +400,13 @@ function accOptions(sel,withNone){
 function expenseSheet(e,pre){
   const p=Object.assign({},pre||{}),catSet=!!p.catSet;delete p.catSet;
   const card=p.card||'';delete p.card;
+  const raw=p.raw||null;delete p.raw;
   const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||(S.accounts.find(a=>!TYPES[a.type].debt)||{}).id||'',rec:false},e?clone(e):{},p);
   if(!S.accounts.find(a=>a.id===x.accId))x.accId='';
   D={x,orig:e?clone(e):null,catManual:!!e||catSet,card};
   const fr=Object.entries(S.merchants).sort((a,b)=>b[1].n-a[1].n).slice(0,6);
   let h='<h3>'+(e?'Editar gasto':'Nuevo gasto')+'</h3>';
+  if(raw)h+='<p class="small mut" style="margin:-4px 0 10px">Recibido del atajo: importe «'+esc(raw.importe)+'», comercio «'+esc(raw.comercio)+'», tarjeta «'+esc(raw.cuenta)+'»</p>';
   h+=field('Importe','<input type="text" id="x-amt" class="amtin" inputmode="decimal" placeholder="0" value="'+esc(x.amount)+'">');
   h+='<div class="seg" style="margin-bottom:12px"><button class="chip cb'+(x.cur==='CRC'?' on':'')+'" data-a="setCur" data-c="CRC">₡ Colones</button><button class="chip cb'+(x.cur==='USD'?' on':'')+'" data-a="setCur" data-c="USD">$ Dólares</button></div>';
   h+=field('Comercio o descripción','<input type="text" id="x-desc" value="'+esc(x.desc)+'" placeholder="Ej. Auto Mercado" autocomplete="off">');
@@ -444,7 +446,7 @@ function saveExp(){
   save();closeSheet();render();toast('Gasto guardado');
 }
 function accountSheet(a){
-  const x=Object.assign({id:uid(),name:'',type:'banco',cur:S.settings.cur||'CRC',balance:'',cuota:'',dia:''},a?clone(a):{});
+  const x=Object.assign({id:uid(),name:'',type:'banco',cur:S.settings.cur||'CRC',balance:'',cuota:'',dia:'',alias:''},a?clone(a):{});
   D={x,isNew:!a};
   let h='<h3>'+(a?'Editar cuenta':'Nueva cuenta')+'</h3>';
   h+=field('Nombre','<input type="text" id="a-name" value="'+esc(x.name)+'" placeholder="Ej. BAC colones, Tarjeta Visa">');
@@ -452,6 +454,7 @@ function accountSheet(a){
   h+=field('Moneda','<select id="a-cur"><option value="CRC"'+(x.cur==='CRC'?' selected':'')+'>Colones (₡)</option><option value="USD"'+(x.cur==='USD'?' selected':'')+'>Dólares ($)</option></select>');
   h+=field('<span id="a-ballabel"></span>','<input type="text" id="a-bal" inputmode="decimal" value="'+esc(x.balance)+'" placeholder="0">');
   h+='<div id="a-debt"><div class="field"><label>Cuota o pago mensual</label><input type="text" id="a-cuota" inputmode="decimal" value="'+esc(x.cuota)+'" placeholder="0"></div><div class="field"><label>Día del mes en que se paga (1-31)</label><input type="text" id="a-dia" inputmode="numeric" value="'+esc(x.dia)+'" placeholder="Ej. 15"></div></div>';
+  h+=field('Nombre de la tarjeta en Cartera (opcional)','<input type="text" id="a-alias" value="'+esc(x.alias||'')+'" placeholder="Ej. Visa Débito"><div class="small mut" style="margin-top:4px">Así el atajo de Apple Pay sabe a qué cuenta va cada pago. El nombre exacto está en Ajustes → Wallet y Apple Pay.</div>');
   h+='<div class="sw" id="a-main"><div><b>Es mi cuenta principal</b><div class="small mut">De aquí sale el dinero al recargar las otras</div></div><input type="checkbox" id="a-ismain"'+(S.settings.mainAcc===x.id?' checked':'')+'></div>';
   h+='<button class="btn" data-a="saveAcc">Guardar</button>';
   if(a)h+='<button class="btn del" data-a="delAcc">Eliminar cuenta</button>';
@@ -468,7 +471,7 @@ function syncAccType(){
 function saveAcc(){
   const x=D.x,name=$('#a-name').value.trim();
   if(!name){toast('Ponle un nombre a la cuenta');return}
-  x.name=name;x.type=$('#a-type').value;x.cur=$('#a-cur').value;
+  x.name=name;x.type=$('#a-type').value;x.cur=$('#a-cur').value;x.alias=($('#a-alias').value||'').trim();
   const b=parseAmount($('#a-bal').value);x.balance=isNaN(b)?0:round2(b);
   if(TYPES[x.type].debt){
     const c=parseAmount($('#a-cuota').value),d=parseInt($('#a-dia').value,10);
@@ -598,12 +601,13 @@ document.addEventListener('change',e=>{
 function fromUrl(){
   const p=new URLSearchParams(location.search);
   if(!p.has('importe')&&!p.has('comercio'))return;
-  const amt=parseAmount(p.get('importe')),desc=(p.get('comercio')||'').trim();
+  const amt=Math.abs(parseAmount(p.get('importe'))),desc=(p.get('comercio')||'').trim();
   const mon=(p.get('moneda')||'').toUpperCase(),cu=p.get('cuenta')||'';
-  const pre={};
+  const pre={raw:{importe:p.get('importe')||'',comercio:p.get('comercio')||'',cuenta:p.get('cuenta')||''}};
   if(amt>0)pre.amount=amt;
   if(desc)pre.desc=desc;
-  if(mon==='USD'||mon==='$')pre.cur='USD';else if(mon==='CRC'||mon==='₡')pre.cur='CRC';
+  const rawAmt=p.get('importe')||'';
+  if(mon==='USD'||mon==='$'||/\$|usd/i.test(rawAmt))pre.cur='USD';else if(mon==='CRC'||mon==='₡'||/₡|crc/i.test(rawAmt))pre.cur='CRC';
   const g=guessCat(desc);if(g){pre.cat=g;pre.catSet=true}
   const k=norm(desc),m=S.merchants[k];
   if(m){if(!pre.cat){pre.cat=m.cat;pre.catSet=true}if(!pre.cur&&pre.amount==null)pre.cur=m.cur}
@@ -611,6 +615,7 @@ function fromUrl(){
   if(q){
     pre.card=cu;
     let acc=S.accounts.find(a=>a.id===S.cardMap[q]);
+    if(!acc)acc=S.accounts.find(a=>a.alias&&norm(a.alias)&&(norm(a.alias)===q||q.includes(norm(a.alias))));
     if(!acc){
       acc=S.accounts.filter(a=>{const n=norm(a.name);return n&&(n===q||q.includes(n)||n.includes(q))}).sort((a,b)=>b.name.length-a.name.length)[0];
     }
