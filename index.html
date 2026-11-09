@@ -130,7 +130,7 @@ function guessCat(name){
 }
 
 /* ---------- datos ---------- */
-const def=()=>({v:1,accounts:[],expenses:[],transfers:[],adjust:[],cardMap:{},mailSeen:{},mailQ:[],mailCards:{},snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',mainAcc:'',lastBackup:null,mailUrl:'',mailKey:'',mailAuto:false,mailSince:'',mailLast:0}});
+const def=()=>({v:1,accounts:[],expenses:[],transfers:[],adjust:[],cardMap:{},mailSeen:{},mailQ:[],mailCards:{},snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',mainAcc:'',lastBackup:null,mailUrl:'',mailKey:'',mailAuto:false,mailSince:'',mailLast:0,lowBal:600}});
 function load(){
   try{const r=localStorage.getItem(KEY);if(r){const o=JSON.parse(r);const d=def();return Object.assign(d,o,{settings:Object.assign(d.settings,o.settings||{})})}}catch(e){}
   return def();
@@ -240,6 +240,8 @@ function dayLabel(d){
 const monthName=mk=>{const[y,m]=mk.split('-');return new Date(+y,+m-1,1).toLocaleDateString('es-CR',{month:'long',year:'numeric'})};
 const monthExp=mk=>S.expenses.filter(e=>e.date.startsWith(mk));
 const monthTotal=mk=>monthExp(mk).reduce((s,e)=>s+toCRC(e.amount,e.cur),0);
+const lowLim=()=>{const v=+S.settings.lowBal;return v>=0&&S.settings.lowBal!==''?v:600};
+const isLow=a=>!TYPES[a.type].debt&&toCRC(a.balance,a.cur)<lowLim();
 const showCur=()=>S.settings.show==='USD'?'USD':'CRC';
 const money=crc=>fmt(convert(crc,'CRC',showCur()),showCur());
 
@@ -285,6 +287,8 @@ function vHome(){
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const dues=S.accounts.map(a=>({a,n:nextDue(a)})).filter(x=>x.n).sort((x,y)=>x.n.days-y.n.days);
   let h='<h1>Mi Margen</h1>';
+  const low=S.accounts.filter(isLow);
+  if(low.length)h+='<div class="card" style="border:1px solid var(--bad,#c0392b)"><b class="bad">⚠️ Saldo bajo</b>'+low.map(a=>'<div class="row small" style="margin-top:6px"><span>'+esc(TYPES[a.type].i+' '+a.name)+'</span><b class="bad">'+fmt(a.balance,a.cur)+'</b></div>').join('')+'<p class="small mut" style="margin:8px 0 0">Menos de '+fmt(lowLim(),"CRC")+'. Recarga la cuenta antes de usarla.</p></div>';
   if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' movimiento nuevo':' movimientos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
   h+='<div class="card hero"><div class="row"><span class="mut small" style="font-weight:600">PATRIMONIO NETO</span><button class="chip" data-a="toggleShow">'+showCur()+'</button></div>';
   h+='<div class="big '+(t.n<0?'bad':'')+'">'+money(t.n)+'</div>'+delta;
@@ -355,7 +359,7 @@ function vAcc(){
   const as=S.accounts.filter(a=>!TYPES[a.type].debt),ds=S.accounts.filter(a=>TYPES[a.type].debt),t=totals();
   const row=a=>{
     const n=nextDue(a);
-    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+(a.id===S.settings.mainAcc?'⭐ Principal · ':'')+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(a.balance,a.cur)+'</div></div>';
+    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+(isLow(a)?'⚠️ Saldo bajo · ':'')+(a.id===S.settings.mainAcc?'⭐ Principal · ':'')+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(a.balance,a.cur)+'</div></div>';
   };
   let h='<div class="row"><h1>Cuentas</h1><div style="display:flex;gap:6px;margin-bottom:14px"><button class="chip" data-a="transfer">↔ Recargar</button><button class="chip on" data-a="newAcc">+ Agregar</button></div></div>';
   if(!S.accounts.length)return h+'<div class="card empty mut">Aún no hay cuentas.</div>';
@@ -379,6 +383,7 @@ function vSet(){
   '<div class="card"><h2>General</h2>'+
   '<div class="field"><label>Tipo de cambio (₡ por $1)</label><input type="text" inputmode="decimal" data-s="rate" value="'+esc(S.settings.rate)+'"></div>'+
   '<div class="field" style="margin:0"><label>Moneda por defecto de los gastos</label><select data-s="cur"><option value="CRC"'+(S.settings.cur==='CRC'?' selected':'')+'>Colones (₡)</option><option value="USD"'+(S.settings.cur==='USD'?' selected':'')+'>Dólares ($)</option></select></div></div>'+
+  '<div class="card"><h2>Alerta de saldo bajo</h2><div class="field" style="margin:0"><label>Avisar cuando una cuenta tenga menos de (₡)</label><input type="text" inputmode="decimal" data-s="lowBal" value="'+esc(S.settings.lowBal)+'"></div></div>'+
   '<div class="card"><h2>Gastos desde el correo</h2><p class="small mut" style="margin-top:0">Lee los avisos de BAC, BP y BCR en tu Gmail (script de Google). Los gastos nuevos aparecen en Inicio para confirmarlos.</p>'+
   '<div class="field"><label>Dirección del script</label><input type="text" data-s="mailUrl" value="'+esc(S.settings.mailUrl)+'" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off"></div>'+
   '<div class="field"><label>Clave</label><input type="text" data-s="mailKey" value="'+esc(S.settings.mailKey)+'" autocapitalize="off" autocorrect="off"></div>'+
@@ -725,6 +730,7 @@ document.addEventListener('change',e=>{
   if(k==='rate'){const v=parseAmount(e.target.value);if(v>0){S.settings.rate=v;save();toast('Tipo de cambio guardado')}else{e.target.value=S.settings.rate}}
   if(k==='cur'){S.settings.cur=e.target.value;save()}
   if(k==='mailUrl'||k==='mailKey'){S.settings[k]=e.target.value.trim();if(S.settings.mailUrl&&S.settings.mailKey&&!S.settings.mailSince)S.settings.mailSince=today();save();render();toast('Guardado')}
+  if(k==='lowBal'){const v=parseAmount(e.target.value);S.settings.lowBal=v>=0?v:600;save();render();toast('Guardado')}
   if(k==='mailSince'){S.settings.mailSince=e.target.value;save()}
   if(k==='mailAuto'){S.settings.mailAuto=e.target.checked;save()}
   if(e.target.dataset&&e.target.dataset.mi!==undefined){const it=S.mailQ[+e.target.dataset.mi];if(it){it.accId=e.target.value;save()}}
