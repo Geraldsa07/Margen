@@ -285,7 +285,7 @@ function vHome(){
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const dues=S.accounts.map(a=>({a,n:nextDue(a)})).filter(x=>x.n).sort((x,y)=>x.n.days-y.n.days);
   let h='<h1>Mi Margen</h1>';
-  if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' gasto nuevo':' gastos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
+  if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' movimiento nuevo':' movimientos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
   h+='<div class="card hero"><div class="row"><span class="mut small" style="font-weight:600">PATRIMONIO NETO</span><button class="chip" data-a="toggleShow">'+showCur()+'</button></div>';
   h+='<div class="big '+(t.n<0?'bad':'')+'">'+money(t.n)+'</div>'+delta;
   h+='<div class="cols"><div><span class="mut small">Activos</span><b class="good">'+money(t.a)+'</b></div><div><span class="mut small">Deudas</span><b class="'+(t.d>0?'bad':'')+'">'+money(t.d)+'</b></div></div></div>';
@@ -532,9 +532,34 @@ function restore(txt){
 function mailAcc(it){
   const l=it.last4&&S.mailCards[it.last4];
   if(l&&S.accounts.find(a=>a.id===l))return l;
-  const b=String(it.bank||'').toLowerCase();if(!b)return '';
-  const a=S.accounts.find(q=>norm(q.name).split(/[^a-z0-9]+/).includes(b));
+  const a=bankAcc(it.bank);
   return a?a.id:'';
+}
+function bankAcc(b){
+  const k=String(b||'').toLowerCase();if(!k)return null;
+  return S.accounts.find(q=>norm(q.name).split(/[^a-z0-9]+/).includes(k))||null;
+}
+function trCommit(t){
+  const f=bankAcc(t.from),o=bankAcc(t.to);if(!f||!o)return false;
+  const x={id:uid(),date:t.d||today(),from:f.id,to:o.id,amount:round2(convert(t.amount,t.cur||'CRC',o.cur)),cur:o.cur};
+  applyTransfer(x,1);S.transfers.push(x);S.mailSeen[t.ref]=1;return true;
+}
+function mailTr(list){
+  let auto=0;const by={};
+  list.forEach(it=>{(by[it.ref]=by[it.ref]||{})[it.dir]=it});
+  Object.keys(by).forEach(ref=>{
+    const g=by[ref],qi=S.mailQ.findIndex(q=>q.ref===ref&&(q.kind==='tr'||q.kind==='tr1'));
+    const q=qi>-1?S.mailQ[qi]:null;
+    if(q&&q.kind==='tr')return;
+    if(q){g[q.dir]=g[q.dir]||q;S.mailQ.splice(qi,1)}
+    const o=g.out,i=g.in,u=o||i;
+    const from=o&&o.bank,to=i?i.bank:(o&&o.dest);
+    if(o&&to&&from!==to&&bankAcc(from)&&bankAcc(to)){
+      const t={kind:'tr',ref,from,to,amount:u.amount,cur:u.cur,d:u.d,desc:u.desc};
+      if(S.settings.mailAuto&&trCommit(t))auto++;else S.mailQ.push(t);
+    }else S.mailQ.push({kind:'tr1',dir:o?'out':'in',bank:u.bank,ref,amount:u.amount,cur:u.cur,d:u.d,desc:u.desc});
+  });
+  return auto;
 }
 function cleanM(s){
   s=String(s||'').replace(/\s+/g,' ').trim().replace(/\s(CR|Costa Rica)$/i,'');
@@ -560,19 +585,28 @@ function mailFetch(manual){
   }).then(o=>{
     if(!o||!o.ok){if(manual)toast(o&&o.error==='token'?'La clave no coincide':'No pude leer los correos');return}
     const since=S.settings.mailSince||'';
-    const items=(o.items||[]).filter(it=>it&&it.ref&&it.amount>0&&(!since||(it.d||'')>=since)&&!S.mailSeen[it.ref]&&!S.mailQ.some(q=>q.ref===it.ref));
+    const items=(o.items||[]).filter(it=>it&&it.kind!=='tr'&&it.ref&&it.amount>0&&(!since||(it.d||'')>=since)&&!S.mailSeen[it.ref]&&!S.mailQ.some(q=>q.ref===it.ref));
     let auto=0;
     items.forEach(it=>{const id=mailAcc(it);if(S.settings.mailAuto&&id){mailCommit(it,id);auto++}else S.mailQ.push(it)});
+    const trs=(o.items||[]).filter(it=>it&&it.kind==='tr'&&it.ref&&it.amount>0&&(!since||(it.d||'')>=since)&&!S.mailSeen[it.ref]);
+    auto+=mailTr(trs);
     S.settings.mailLast=Date.now();save();
     if(!D)render();
     if(auto)toast(auto+(auto===1?' gasto importado':' gastos importados')+' del correo');
-    else if(manual)toast(items.length?items.length+' nuevos':'Sin gastos nuevos');
+    else if(manual)toast(items.length||trs.length?'Hay movimientos nuevos':'Sin movimientos nuevos');
   });
 }
 function mailSheet(){
   if(!S.mailQ.length){closeSheet();render();return}
   let h='<h3>Gastos del correo</h3>';
   S.mailQ.forEach((it,i)=>{
+    if(it.kind==='tr'){
+      h+='<div style="margin-bottom:14px"><div class="row"><b>↔️ '+esc(it.from)+' → '+esc(it.to)+'</b><b>'+fmt(it.amount,it.cur==='USD'?'USD':'CRC')+'</b></div><div class="row small mut"><span>'+fmtDate(it.d)+' · Recarga'+(it.desc?' · '+esc(it.desc):'')+'</span><button class="chip" data-a="mailIgnore" data-i="'+i+'">Ignorar</button></div></div>';return;
+    }
+    if(it.kind==='tr1'){
+      const out=it.dir==='out';
+      h+='<div style="margin-bottom:14px"><div class="row"><b>'+(out?'Salida SINPE de ':'Entrada SINPE a ')+esc(it.bank)+'</b><b>'+fmt(it.amount,it.cur==='USD'?'USD':'CRC')+'</b></div><div class="row small mut"><span>'+fmtDate(it.d)+(it.desc?' · '+esc(it.desc):'')+'</span></div><div class="chips" style="margin-top:6px"><button class="chip" data-a="mailTr1" data-i="'+i+'">'+(out?'Es un gasto':'Es un ingreso')+'</button><button class="chip" data-a="mailIgnore" data-i="'+i+'">Ignorar</button></div><div class="small mut" style="margin-top:6px">'+(out?'O es una recarga a:':'O es una recarga desde:')+'</div><div class="row" style="gap:6px"><select id="td-'+i+'" style="flex:1">'+S.accounts.filter(q=>q!==bankAcc(it.bank)).map(q=>'<option value="'+q.id+'"'+(q.id===(it.bank==='BP'?'':S.settings.mainAcc)?' selected':'')+'>'+esc(TYPES[q.type].i+' '+q.name)+'</option>').join('')+'</select><button class="chip" data-a="mailTrDest" data-i="'+i+'">Recarga</button></div><div class="small mut">Si es una recarga, la otra cuenta avisa en unos minutos y se junta sola.</div></div>';return;
+    }
     const id=it.accId!==undefined?it.accId:mailAcc(it);
     h+='<div style="margin-bottom:14px"><div class="row"><b>'+esc(cleanM(it.desc))+'</b><b>'+fmt(it.amount,it.cur==='USD'?'USD':'CRC')+'</b></div>'+
     '<div class="row small mut"><span>'+fmtDate(it.d)+(it.bank?' · '+esc(it.bank):'')+(it.last4?' ·· '+esc(it.last4):'')+'</span><button class="chip" data-a="mailIgnore" data-i="'+i+'">Ignorar</button></div>'+
@@ -594,13 +628,38 @@ const A={
   transfer:()=>transferSheet(),
   hFilter:t=>{hFilter=t.dataset.f;render()},
   mailOpen:()=>mailSheet(),
+  mailTr1:t=>{
+    const it=S.mailQ[+t.dataset.i];if(!it)return;
+    const a=bankAcc(it.bank);if(!a){toast('No encuentro la cuenta '+it.bank);return}
+    if(it.dir==='out'){
+      const desc=cleanM(it.desc)||'Pago SINPE';
+      const x={id:uid(),date:it.d||today(),desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId:a.id,rec:false,ref:it.ref};
+      applyExp(x,1);S.expenses.push(x);
+    }else{
+      const v=round2(convert(it.amount,it.cur||'CRC',a.cur));
+      a.balance=round2(a.balance+v);S.adjust.push({id:uid(),date:it.d||today(),acc:a.id,delta:v,cur:a.cur});
+    }
+    S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet();
+  },
+  mailTrDest:t=>{
+    const it=S.mailQ[+t.dataset.i];if(!it)return;
+    const me=bankAcc(it.bank),sel=$('#td-'+t.dataset.i),other=sel&&S.accounts.find(q=>q.id===sel.value);
+    if(!me||!other){toast('Elige la otra cuenta');return}
+    const out=it.dir==='out';
+    const x={id:uid(),date:it.d||today(),from:out?me.id:other.id,to:out?other.id:me.id,amount:0,cur:'',};
+    const tgt=out?other:me;x.cur=tgt.cur;x.amount=round2(convert(it.amount,it.cur||'CRC',tgt.cur));
+    applyTransfer(x,1);S.transfers.push(x);S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet();toast('Recarga registrada');
+  },
   mailNow:()=>{mailT=Date.now();mailFetch(true)},
   mailIgnore:t=>{const it=S.mailQ[+t.dataset.i];if(!it)return;S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet()},
   mailAddAll:()=>{
     let n=0,skip=0;
-    S.mailQ=S.mailQ.filter(it=>{const id=it.accId!==undefined?it.accId:mailAcc(it);if(!id){skip++;return true}mailCommit(it,id);n++;return false});
+    S.mailQ=S.mailQ.filter(it=>{
+      if(it.kind==='tr'){if(trCommit(it)){n++;return false}skip++;return true}
+      if(it.kind==='tr1')return true;
+      const id=it.accId!==undefined?it.accId:mailAcc(it);if(!id){skip++;return true}mailCommit(it,id);n++;return false});
     save();render();
-    if(skip){mailSheet();toast(n+' agregados, '+skip+' sin cuenta')}else{closeSheet();toast(n+(n===1?' gasto agregado':' gastos agregados'))}
+    if(S.mailQ.length){mailSheet();toast(n+' agregados'+(skip?', '+skip+' sin cuenta':''))}else{closeSheet();toast(n+(n===1?' movimiento agregado':' movimientos agregados'))}
   },
   saveTransfer,
   delTransfer:t=>{
