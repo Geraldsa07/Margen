@@ -130,7 +130,7 @@ function guessCat(name){
 }
 
 /* ---------- datos ---------- */
-const def=()=>({v:1,accounts:[],expenses:[],transfers:[],adjust:[],cardMap:{},snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',mainAcc:'',lastBackup:null}});
+const def=()=>({v:1,accounts:[],expenses:[],transfers:[],adjust:[],cardMap:{},mailSeen:{},mailQ:[],mailCards:{},snapshots:[],merchants:{},settings:{rate:500,cur:'CRC',show:'CRC',lastAcc:'',mainAcc:'',lastBackup:null,mailUrl:'',mailKey:'',mailAuto:false,mailSince:'',mailLast:0}});
 function load(){
   try{const r=localStorage.getItem(KEY);if(r){const o=JSON.parse(r);const d=def();return Object.assign(d,o,{settings:Object.assign(d.settings,o.settings||{})})}}catch(e){}
   return def();
@@ -285,6 +285,7 @@ function vHome(){
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const dues=S.accounts.map(a=>({a,n:nextDue(a)})).filter(x=>x.n).sort((x,y)=>x.n.days-y.n.days);
   let h='<h1>Mi Margen</h1>';
+  if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' gasto nuevo':' gastos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
   h+='<div class="card hero"><div class="row"><span class="mut small" style="font-weight:600">PATRIMONIO NETO</span><button class="chip" data-a="toggleShow">'+showCur()+'</button></div>';
   h+='<div class="big '+(t.n<0?'bad':'')+'">'+money(t.n)+'</div>'+delta;
   h+='<div class="cols"><div><span class="mut small">Activos</span><b class="good">'+money(t.a)+'</b></div><div><span class="mut small">Deudas</span><b class="'+(t.d>0?'bad':'')+'">'+money(t.d)+'</b></div></div></div>';
@@ -378,6 +379,12 @@ function vSet(){
   '<div class="card"><h2>General</h2>'+
   '<div class="field"><label>Tipo de cambio (₡ por $1)</label><input type="text" inputmode="decimal" data-s="rate" value="'+esc(S.settings.rate)+'"></div>'+
   '<div class="field" style="margin:0"><label>Moneda por defecto de los gastos</label><select data-s="cur"><option value="CRC"'+(S.settings.cur==='CRC'?' selected':'')+'>Colones (₡)</option><option value="USD"'+(S.settings.cur==='USD'?' selected':'')+'>Dólares ($)</option></select></div></div>'+
+  '<div class="card"><h2>Gastos desde el correo</h2><p class="small mut" style="margin-top:0">Lee los avisos de BAC, BP y BCR en tu Gmail (script de Google). Los gastos nuevos aparecen en Inicio para confirmarlos.</p>'+
+  '<div class="field"><label>Dirección del script</label><input type="text" data-s="mailUrl" value="'+esc(S.settings.mailUrl)+'" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off"></div>'+
+  '<div class="field"><label>Clave</label><input type="text" data-s="mailKey" value="'+esc(S.settings.mailKey)+'" autocapitalize="off" autocorrect="off"></div>'+
+  '<div class="field"><label>Importar desde</label><input type="date" data-s="mailSince" value="'+esc(S.settings.mailSince)+'"></div>'+
+  '<div class="sw"><div><b>Agregar solos</b><div class="small mut">Sin pedir confirmación cuando reconozco la cuenta</div></div><input type="checkbox" data-s="mailAuto"'+(S.settings.mailAuto?' checked':'')+'></div>'+
+  '<button class="btn sec" data-a="mailNow">Buscar ahora</button>'+(S.settings.mailLast?'<p class="small mut" style="margin:0">Última vez: '+new Date(S.settings.mailLast).toLocaleString('es-CR')+'</p>':'')+'</div>'+
   '<div class="card"><h2>Atajo de Apple Pay</h2><p class="small mut" style="margin-top:0">Cada pago con Apple Pay abre esta app con el gasto casi listo. Solo pulsas Guardar.</p>'+
   '<ol class="small"><li>Atajos → Automatización → <b>+</b> → <b>Cartera</b>. Elige tus tarjetas y marca <b>Ejecutar inmediatamente</b>.</li>'+
   '<li>Agrega la acción <b>Abrir URLs</b> y pega la dirección de abajo.</li>'+
@@ -521,6 +528,63 @@ function restore(txt){
   }catch(e){toast('El respaldo no es válido')}
 }
 
+/* ---------- gastos desde el correo ---------- */
+function mailAcc(it){
+  const l=it.last4&&S.mailCards[it.last4];
+  if(l&&S.accounts.find(a=>a.id===l))return l;
+  const b=String(it.bank||'').toLowerCase();if(!b)return '';
+  const a=S.accounts.find(q=>norm(q.name).split(/[^a-z0-9]+/).includes(b));
+  return a?a.id:'';
+}
+function cleanM(s){
+  s=String(s||'').replace(/\s+/g,' ').trim().replace(/\s(CR|Costa Rica)$/i,'');
+  return s.toLowerCase().replace(/(^|[\s\-\/])([a-záéíóúñ])/g,(m,a,b)=>a+b.toUpperCase());
+}
+function mailCommit(it,accId){
+  const desc=cleanM(it.desc)||'Compra';
+  const x={id:uid(),date:it.d||today(),desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId,rec:false,ref:it.ref};
+  applyExp(x,1);S.expenses.push(x);S.mailSeen[it.ref]=1;
+  if(it.last4&&accId)S.mailCards[it.last4]=accId;
+}
+function mailFetch(manual){
+  const u=S.settings.mailUrl,k=S.settings.mailKey;
+  if(!u||!k){if(manual)toast('Falta la dirección o la clave');return Promise.resolve()}
+  return new Promise(res=>{
+    const cb='mcb'+Date.now();let done=false;
+    const s=document.createElement('script');
+    const fin=o=>{if(done)return;done=true;clearTimeout(tm);try{delete window[cb]}catch(e){window[cb]=undefined}s.remove();res(o)};
+    const tm=setTimeout(()=>fin(null),15000);
+    window[cb]=fin;s.onerror=()=>fin(null);
+    s.src=u+(u.includes('?')?'&':'?')+'t='+encodeURIComponent(k)+'&dias=14&callback='+cb;
+    document.head.appendChild(s);
+  }).then(o=>{
+    if(!o||!o.ok){if(manual)toast(o&&o.error==='token'?'La clave no coincide':'No pude leer los correos');return}
+    const since=S.settings.mailSince||'';
+    const items=(o.items||[]).filter(it=>it&&it.ref&&it.amount>0&&(!since||(it.d||'')>=since)&&!S.mailSeen[it.ref]&&!S.mailQ.some(q=>q.ref===it.ref));
+    let auto=0;
+    items.forEach(it=>{const id=mailAcc(it);if(S.settings.mailAuto&&id){mailCommit(it,id);auto++}else S.mailQ.push(it)});
+    S.settings.mailLast=Date.now();save();
+    if(!D)render();
+    if(auto)toast(auto+(auto===1?' gasto importado':' gastos importados')+' del correo');
+    else if(manual)toast(items.length?items.length+' nuevos':'Sin gastos nuevos');
+  });
+}
+function mailSheet(){
+  if(!S.mailQ.length){closeSheet();render();return}
+  let h='<h3>Gastos del correo</h3>';
+  S.mailQ.forEach((it,i)=>{
+    const id=it.accId!==undefined?it.accId:mailAcc(it);
+    h+='<div style="margin-bottom:14px"><div class="row"><b>'+esc(cleanM(it.desc))+'</b><b>'+fmt(it.amount,it.cur==='USD'?'USD':'CRC')+'</b></div>'+
+    '<div class="row small mut"><span>'+fmtDate(it.d)+(it.bank?' · '+esc(it.bank):'')+(it.last4?' ·· '+esc(it.last4):'')+'</span><button class="chip" data-a="mailIgnore" data-i="'+i+'">Ignorar</button></div>'+
+    '<select data-mi="'+i+'" style="margin-top:6px">'+accOptions(id,true)+'</select></div>';
+  });
+  h+='<button class="btn" data-a="mailAddAll">Agregar todos</button><button class="btn sec" data-a="closeSheet">Cerrar</button>';
+  openSheet(h);
+}
+let mailT=0;
+function mailAuto(){if(Date.now()-mailT<60000)return;mailT=Date.now();mailFetch(false)}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)mailAuto()});
+
 /* ---------- eventos ---------- */
 const A={
   tab:t=>{tab=t.dataset.t;render();window.scrollTo(0,0)},
@@ -529,6 +593,15 @@ const A={
   newAcc:()=>accountSheet(),
   transfer:()=>transferSheet(),
   hFilter:t=>{hFilter=t.dataset.f;render()},
+  mailOpen:()=>mailSheet(),
+  mailNow:()=>{mailT=Date.now();mailFetch(true)},
+  mailIgnore:t=>{const it=S.mailQ[+t.dataset.i];if(!it)return;S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet()},
+  mailAddAll:()=>{
+    let n=0,skip=0;
+    S.mailQ=S.mailQ.filter(it=>{const id=it.accId!==undefined?it.accId:mailAcc(it);if(!id){skip++;return true}mailCommit(it,id);n++;return false});
+    save();render();
+    if(skip){mailSheet();toast(n+' agregados, '+skip+' sin cuenta')}else{closeSheet();toast(n+(n===1?' gasto agregado':' gastos agregados'))}
+  },
   saveTransfer,
   delTransfer:t=>{
     const x=S.transfers.find(q=>q.id===t.dataset.id);
@@ -592,6 +665,10 @@ document.addEventListener('change',e=>{
   const k=e.target.dataset&&e.target.dataset.s;
   if(k==='rate'){const v=parseAmount(e.target.value);if(v>0){S.settings.rate=v;save();toast('Tipo de cambio guardado')}else{e.target.value=S.settings.rate}}
   if(k==='cur'){S.settings.cur=e.target.value;save()}
+  if(k==='mailUrl'||k==='mailKey'){S.settings[k]=e.target.value.trim();if(S.settings.mailUrl&&S.settings.mailKey&&!S.settings.mailSince)S.settings.mailSince=today();save();render();toast('Guardado')}
+  if(k==='mailSince'){S.settings.mailSince=e.target.value;save()}
+  if(k==='mailAuto'){S.settings.mailAuto=e.target.checked;save()}
+  if(e.target.dataset&&e.target.dataset.mi!==undefined){const it=S.mailQ[+e.target.dataset.mi];if(it){it.accId=e.target.value;save()}}
   if(e.target.id==='file'&&e.target.files[0]){
     const r=new FileReader();r.onload=()=>restore(r.result);r.readAsText(e.target.files[0]);e.target.value='';
   }
@@ -626,7 +703,7 @@ function fromUrl(){
 }
 
 if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
-snap();render();fromUrl();
+snap();render();fromUrl();if(!new URLSearchParams(location.search).has('importe'))setTimeout(mailAuto,300);
 </script>
 </body>
 </html>
