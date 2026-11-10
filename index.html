@@ -287,6 +287,7 @@ function vHome(){
   const cats=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
   const dues=S.accounts.map(a=>({a,n:nextDue(a)})).filter(x=>x.n).sort((x,y)=>x.n.days-y.n.days);
   let h='<h1>Mi Margen</h1>';
+  if(mailBusy)h+='<div class="small mut" style="margin:-6px 0 8px">🔄 Buscando correos…</div>';
   const low=S.accounts.filter(isLow);
   if(low.length)h+='<div class="card" style="border:1px solid var(--bad,#c0392b)"><b class="bad">⚠️ Saldo bajo</b>'+low.map(a=>'<div class="row small" style="margin-top:6px"><span>'+esc(TYPES[a.type].i+' '+a.name)+'</span><b class="bad">'+fmt(a.balance,a.cur)+'</b></div>').join('')+'<p class="small mut" style="margin:8px 0 0">Menos de '+fmt(lowLim(),"CRC")+'. Recarga la cuenta antes de usarla.</p></div>';
   if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' movimiento nuevo':' movimientos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
@@ -576,18 +577,21 @@ function mailCommit(it,accId){
   applyExp(x,1);S.expenses.push(x);S.mailSeen[it.ref]=1;
   if(it.last4&&accId)S.mailCards[it.last4]=accId;
 }
+let mailBusy=false;
 function mailFetch(manual){
   const u=S.settings.mailUrl,k=S.settings.mailKey;
   if(!u||!k){if(manual)toast('Falta la dirección o la clave');return Promise.resolve()}
+  mailBusy=true;if(!D&&tab==='home')render();
   return new Promise(res=>{
     const cb='mcb'+Date.now();let done=false;
     const s=document.createElement('script');
     const fin=o=>{if(done)return;done=true;clearTimeout(tm);try{delete window[cb]}catch(e){window[cb]=undefined}s.remove();res(o)};
     const tm=setTimeout(()=>fin(null),15000);
     window[cb]=fin;s.onerror=()=>fin(null);
-    s.src=u+(u.includes('?')?'&':'?')+'t='+encodeURIComponent(k)+'&dias=14&callback='+cb;
+    s.src=u+(u.includes('?')?'&':'?')+'t='+encodeURIComponent(k)+'&dias='+(manual?5:3)+'&callback='+cb;
     document.head.appendChild(s);
   }).then(o=>{
+    mailBusy=false;
     if(!o||!o.ok){if(manual)toast(o&&o.error==='token'?'La clave no coincide':'No pude leer los correos');return}
     const since=S.settings.mailSince||'';
     const items=(o.items||[]).filter(it=>it&&it.kind!=='tr'&&it.ref&&it.amount>0&&(!since||(it.d||'')>=since)&&!S.mailSeen[it.ref]&&!S.mailQ.some(q=>q.ref===it.ref));
@@ -621,8 +625,9 @@ function mailSheet(){
   openSheet(h);
 }
 let mailT=0;
-function mailAuto(){if(Date.now()-mailT<60000)return;mailT=Date.now();mailFetch(false)}
+function mailAuto(){if(mailBusy||Date.now()-mailT<15000)return;mailT=Date.now();mailFetch(false)}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)mailAuto()});
+setInterval(()=>{if(!document.hidden&&S.settings.mailUrl)mailAuto()},30000);
 
 /* ---------- eventos ---------- */
 const A={
