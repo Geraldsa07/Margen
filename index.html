@@ -170,7 +170,7 @@ function totals(){
 function snap(){
   if(!S.accounts.length)return;
   const t=totals(),d=today(),l=S.snapshots,last=l[l.length-1];
-  if(last&&last.d===d)last.n=Math.round(t.n);else l.push({d,n:Math.round(t.n)});
+  if(last&&last.d===d){last.n=Math.round(t.n);last.s=saveAmt()}else l.push({d,n:Math.round(t.n),s:saveAmt()});
   if(l.length>800)l.shift();
 }
 function applyExp(e,sign){
@@ -240,6 +240,8 @@ function dayLabel(d){
 const monthName=mk=>{const[y,m]=mk.split('-');return new Date(+y,+m-1,1).toLocaleDateString('es-CR',{month:'long',year:'numeric'})};
 const monthExp=mk=>S.expenses.filter(e=>e.date.startsWith(mk));
 const monthTotal=mk=>monthExp(mk).reduce((s,e)=>s+toCRC(e.amount,e.cur),0);
+const snapN=x=>x.n-(x.s==null?saveAmt():x.s);
+const saveAmt=()=>S.settings.saving==null||S.settings.saving===''?200000:+S.settings.saving;
 const lowLim=()=>{const v=+S.settings.lowBal;return v>=0&&S.settings.lowBal!==''?v:600};
 const isLow=a=>!TYPES[a.type].debt&&toCRC(a.balance,a.cur)<lowLim();
 const showCur=()=>S.settings.show==='USD'?'USD':'CRC';
@@ -261,9 +263,9 @@ function render(){
 function chartSvg(){
   const l=S.snapshots.slice(-60);
   if(l.length<2)return'<p class="mut small" style="margin:0">El gráfico aparece cuando haya datos de 2 días distintos. Abre la app cada día o registra gastos y se va armando solo.</p>';
-  const W=320,H=110,p=6,vs=l.map(x=>x.n);let mn=Math.min(...vs),mx=Math.max(...vs);
+  const W=320,H=110,p=6,vs=l.map(snapN);let mn=Math.min(...vs),mx=Math.max(...vs);
   if(mn===mx){mn-=1;mx+=1}
-  const pts=l.map((x,i)=>[p+i*(W-2*p)/(l.length-1),H-p-(x.n-mn)/(mx-mn)*(H-2*p)]);
+  const pts=l.map((x,i)=>[p+i*(W-2*p)/(l.length-1),H-p-(snapN(x)-mn)/(mx-mn)*(H-2*p)]);
   const line=pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
   const area=line+' L'+pts[pts.length-1][0].toFixed(1)+' '+H+' L'+pts[0][0].toFixed(1)+' '+H+' Z';
   return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="chart"><path d="'+area+'" fill="var(--accent)" opacity=".13"/><path d="'+line+'" fill="none" stroke="var(--accent)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg><div class="row small mut"><span>'+fmtDate(l[0].d)+' · '+money(l[0].n)+'</span><span>'+fmtDate(l[l.length-1].d)+'</span></div>';
@@ -279,7 +281,7 @@ function vHome(){
   const limS=lim.getFullYear()+'-'+pad(lim.getMonth()+1)+'-'+pad(lim.getDate());
   const base=S.snapshots.find(s=>s.d>=limS);
   if(base&&base.d!==now){
-    const d=t.n-base.n;
+    const d=(t.n-saveAmt())-snapN(base);
     delta='<span class="pill '+(d>=0?'good':'bad')+'">'+(d>=0?'▲ ':'▼ ')+money(Math.abs(d))+' desde '+fmtDate(base.d)+'</span>';
   }
   const mk=now.slice(0,7),list=monthExp(mk),tot=monthTotal(mk);
@@ -292,8 +294,9 @@ function vHome(){
   if(low.length)h+='<div class="card" style="border:1px solid var(--bad,#c0392b)"><b class="bad">⚠️ Saldo bajo</b>'+low.map(a=>'<div class="row small" style="margin-top:6px"><span>'+esc(TYPES[a.type].i+' '+a.name)+'</span><b class="bad">'+fmt(a.balance,a.cur)+'</b></div>').join('')+'<p class="small mut" style="margin:8px 0 0">Menos de '+fmt(lowLim(),"CRC")+'. Recarga la cuenta antes de usarla.</p></div>';
   if(S.mailQ.length)h+='<div class="card" style="background:var(--soft)"><b>📧 '+S.mailQ.length+(S.mailQ.length===1?' movimiento nuevo':' movimientos nuevos')+' del correo</b><button class="btn" data-a="mailOpen" style="margin-top:10px">Revisar y agregar</button></div>';
   h+='<div class="card hero"><div class="row"><span class="mut small" style="font-weight:600">PATRIMONIO NETO</span><button class="chip" data-a="toggleShow">'+showCur()+'</button></div>';
-  h+='<div class="big '+(t.n<0?'bad':'')+'">'+money(t.n)+'</div>'+delta;
-  h+='<div class="cols"><div><span class="mut small">Activos</span><b class="good">'+money(t.a)+'</b></div><div><span class="mut small">Deudas</span><b class="'+(t.d>0?'bad':'')+'">'+money(t.d)+'</b></div></div></div>';
+  h+='<div class="big '+(t.n-saveAmt()<0?'bad':'')+'">'+money(t.n-saveAmt())+'</div>'+delta+'<div class="mut small" style="margin-top:4px">Sin contar el ahorro</div>';
+  h+='<div class="cols"><div><span class="mut small">Activos</span><b class="good">'+money(t.a-saveAmt())+'</b></div><div><span class="mut small">Deudas</span><b class="'+(t.d>0?'bad':'')+'">'+money(t.d)+'</b></div></div></div>';
+  h+='<div class="card"><div class="row"><div><span class="mut small" style="font-weight:600">AHORRO POR EL MOMENTO</span><div class="big" style="font-size:28px">'+money(saveAmt())+'</div></div><button class="chip" data-a="savingSheet">Cambiar</button></div></div>';
   h+='<div class="card"><h2>Evolución</h2>'+chartSvg()+'</div>';
   if(dues.length){
     h+='<div class="card"><h2>Próximos pagos</h2>';
@@ -497,6 +500,15 @@ function saveAcc(){
   else if(S.settings.mainAcc===x.id)S.settings.mainAcc='';
   save();closeSheet();render();toast('Cuenta guardada');
 }
+function savingSheet(){
+  D={};
+  openSheet('<h3>Ahorro por el momento</h3><p class="mut small" style="margin-top:-6px">Es un monto que tú pones. No cambia el saldo de tus cuentas.</p>'+field('Monto (₡)','<input type="text" id="sv-amt" class="amtin" inputmode="decimal" value="'+esc(saveAmt())+'">')+'<button class="btn" data-a="saveSaving">Guardar</button><button class="btn sec" data-a="closeSheet">Cancelar</button>');
+}
+function askSave(amtCRC){
+  D={ask:1};
+  openSheet('<h3>Te depositaron en BP</h3><p class="mut small" style="margin-top:-6px">Entraron '+fmt(amtCRC,'CRC')+'. Ahorro actual: '+fmt(saveAmt(),'CRC')+'.</p>'+field('¿Cuánto quieres ahorrar de este pago? (₡)','<input type="text" id="sv-add" class="amtin" inputmode="decimal" placeholder="0">')+'<button class="btn" data-a="saveAsk">Sumar al ahorro</button><button class="btn sec" data-a="skipAsk">No ahorrar ahora</button>');
+}
+function afterAsk(){if(S.mailQ.length)mailSheet();else closeSheet()}
 function paySheet(id){
   const a=S.accounts.find(q=>q.id===id);if(!a)return;
   D={id};
@@ -637,6 +649,10 @@ const A={
   newAcc:()=>accountSheet(),
   transfer:()=>transferSheet(),
   hFilter:t=>{hFilter=t.dataset.f;render()},
+  savingSheet,
+  saveAsk:()=>{const v=parseAmount($('#sv-add').value);if(!(v>0)){toast('Escribe cuánto ahorrar o toca No ahorrar');return}S.settings.saving=saveAmt()+v;snap();save();render();toast('Ahorro: '+fmt(saveAmt(),'CRC'));afterAsk()},
+  skipAsk:()=>afterAsk(),
+  saveSaving:()=>{const v=parseAmount($('#sv-amt').value);if(!(v>=0)){toast('Escribe un monto');return}S.settings.saving=v;save();closeSheet();render();toast('Ahorro actualizado')},
   mailOpen:()=>mailSheet(),
   mailTr1:t=>{
     const it=S.mailQ[+t.dataset.i];if(!it)return;
@@ -649,7 +665,9 @@ const A={
       const v=round2(convert(it.amount,it.cur||'CRC',a.cur));
       a.balance=round2(a.balance+v);S.adjust.push({id:uid(),date:it.d||today(),acc:a.id,delta:v,cur:a.cur});
     }
-    S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet();
+    S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();
+    const crc=convert(it.amount,it.cur||'CRC','CRC');
+    if(it.dir==='in'&&it.bank==='BP'&&crc>=100000)askSave(crc);else mailSheet();
   },
   mailTrDest:t=>{
     const it=S.mailQ[+t.dataset.i];if(!it)return;
