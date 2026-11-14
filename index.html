@@ -243,7 +243,9 @@ const monthTotal=mk=>monthExp(mk).reduce((s,e)=>s+toCRC(e.amount,e.cur),0);
 const snapN=x=>x.n-(x.s==null?saveAmt():x.s);
 const saveAmt=()=>S.settings.saving==null||S.settings.saving===''?200000:+S.settings.saving;
 const lowLim=()=>{const v=+S.settings.lowBal;return v>=0&&S.settings.lowBal!==''?v:600};
-const isLow=a=>!TYPES[a.type].debt&&toCRC(a.balance,a.cur)<lowLim();
+const savAcc=()=>S.accounts.find(q=>q.id===S.settings.mainAcc&&!TYPES[q.type].debt);
+const availBal=a=>{const m=savAcc();return m&&m.id===a.id?round2(a.balance-convert(saveAmt(),'CRC',a.cur)):a.balance};
+const isLow=a=>!TYPES[a.type].debt&&toCRC(availBal(a),a.cur)<lowLim();
 const showCur=()=>S.settings.show==='USD'?'USD':'CRC';
 const money=crc=>fmt(convert(crc,'CRC',showCur()),showCur());
 
@@ -362,12 +364,12 @@ function vExp(){
 function vAcc(){
   const as=S.accounts.filter(a=>!TYPES[a.type].debt),ds=S.accounts.filter(a=>TYPES[a.type].debt),t=totals();
   const row=a=>{
-    const n=nextDue(a);
-    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+(isLow(a)?'⚠️ Saldo bajo · ':'')+(a.id===S.settings.mainAcc?'⭐ Principal · ':'')+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(a.balance,a.cur)+'</div></div>';
+    const n=nextDue(a),sv=savAcc()&&savAcc().id===a.id&&saveAmt()>0;
+    return '<div class="item" data-a="editAcc" data-id="'+a.id+'"><div class="ico">'+TYPES[a.type].i+'</div><div class="grow"><b>'+esc(a.name)+'</b><span class="small mut">'+(isLow(a)?'⚠️ Saldo bajo · ':'')+(a.id===S.settings.mainAcc?'⭐ Principal · ':'')+TYPES[a.type].n+' · '+a.cur+(n?' · '+dueTxt(n.days):'')+(sv?' · Ahorro aparte '+fmt(saveAmt(),'CRC'):'')+'</span></div><div class="amt '+(TYPES[a.type].debt?'bad':'')+'">'+fmt(availBal(a),a.cur)+'</div></div>';
   };
   let h='<div class="row"><h1>Cuentas</h1><div style="display:flex;gap:6px;margin-bottom:14px"><button class="chip" data-a="transfer">↔ Recargar</button><button class="chip on" data-a="newAcc">+ Agregar</button></div></div>';
   if(!S.accounts.length)return h+'<div class="card empty mut">Aún no hay cuentas.</div>';
-  h+='<div class="card"><div class="row"><h2 style="margin:0">Activos</h2><b class="good">'+money(t.a)+'</b></div>'+(as.length?as.map(row).join(''):'<p class="mut small">Sin activos.</p>')+'</div>';
+  h+='<div class="card"><div class="row"><h2 style="margin:0">Activos</h2><b class="good">'+money(t.a-saveAmt())+'</b></div>'+(as.length?as.map(row).join(''):'<p class="mut small">Sin activos.</p>')+'</div>';
   h+='<div class="card"><div class="row"><h2 style="margin:0">Deudas</h2><b class="bad">'+money(t.d)+'</b></div>'+(ds.length?ds.map(row).join(''):'<p class="mut small">Sin deudas. 🎉</p>')+'</div>';
   const tr=S.transfers.slice().sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id)).slice(0,6);
   if(tr.length){
