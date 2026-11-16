@@ -273,6 +273,33 @@ function chartSvg(){
   return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" class="chart"><path d="'+area+'" fill="var(--accent)" opacity=".13"/><path d="'+line+'" fill="none" stroke="var(--accent)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/></svg><div class="row small mut"><span>'+fmtDate(l[0].d)+' · '+money(l[0].n)+'</span><span>'+fmtDate(l[l.length-1].d)+'</span></div>';
 }
 
+function dailyCard(){
+  const now=new Date(),ds=x=>x.getFullYear()+'-'+pad(x.getMonth()+1)+'-'+pad(x.getDate());
+  const days=[];for(let i=13;i>=0;i--){const x=new Date(now.getFullYear(),now.getMonth(),now.getDate()-i);days.push({d:ds(x),w:'DLMMJVS'[x.getDay()],v:0})}
+  const idx={};days.forEach((q,i)=>idx[q.d]=i);
+  S.expenses.forEach(e=>{if(e.date in idx)days[idx[e.date]].v+=toCRC(e.amount,e.cur)});
+  const sum14=days.reduce((a,q)=>a+q.v,0);
+  if(!S.expenses.length)return '<div class="card"><h2>Gasto diario</h2><p class="mut small" style="margin:0">Cuando registres gastos aquí verás cuánto gastas cada día.</p></div>';
+  const mx=Math.max(1,...days.map(q=>q.v)),W=320,H=90,bw=W/14;
+  let svg='<svg viewBox="0 0 '+W+' '+(H+16)+'" width="100%" style="display:block">';
+  days.forEach((q,i)=>{
+    const h=q.v?Math.max(3,q.v/mx*H):0,last=i===13;
+    svg+='<rect x="'+(i*bw+3).toFixed(1)+'" y="'+(H-h).toFixed(1)+'" width="'+(bw-6).toFixed(1)+'" height="'+h.toFixed(1)+'" rx="3" fill="'+(last?'var(--accent,#1f9d55)':'var(--accent,#1f9d55)')+'" opacity="'+(last?1:.55)+'"/>';
+    svg+='<text x="'+(i*bw+bw/2).toFixed(1)+'" y="'+(H+12)+'" text-anchor="middle" font-size="9" fill="currentColor" opacity="'+(last?.9:.5)+'">'+q.w+'</text>';
+  });
+  svg+='</svg>';
+  const mk=ds(now).slice(0,7),dn=now.getDate(),dim=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+  const mt=monthTotal(mk),avg=mt/dn,proj=avg*dim;
+  const pm=new Date(now.getFullYear(),now.getMonth()-1,1),pmk=pm.getFullYear()+'-'+pad(pm.getMonth()+1);
+  const pmSame=S.expenses.filter(e=>e.date.startsWith(pmk)&&+e.date.slice(8,10)<=dn).reduce((a,e)=>a+toCRC(e.amount,e.cur),0);
+  const hoy=days[13].v;
+  let cmp='';
+  if(pmSame>0){const d=mt-pmSame,pc=Math.round(Math.abs(d)/pmSame*100);cmp='<div><span class="mut small">Vs. mes pasado</span><b class="'+(d>0?'bad':'good')+'">'+(d>0?'▲ ':'▼ ')+pc+'%</b></div>'}
+  return '<div class="card"><h2>Gasto diario · últimos 14 días</h2>'+svg+
+  '<div class="cols" style="margin-top:12px"><div><span class="mut small">Hoy</span><b>'+money(hoy)+'</b></div><div><span class="mut small">Promedio por día</span><b>'+money(avg)+'</b></div></div>'+
+  '<div class="cols" style="margin-top:8px"><div><span class="mut small">Proyección del mes</span><b>'+money(proj)+'</b></div>'+(cmp||'<div><span class="mut small">Últimos 14 días</span><b>'+money(sum14)+'</b></div>')+'</div>'+
+  (pmSame>0?'<p class="mut small" style="margin:8px 0 0">Mes pasado a esta fecha: '+money(pmSame)+'</p>':'')+'</div>';
+}
 function vHome(){
   if(!S.accounts.length){
     return '<h1>Mi Margen</h1><div class="card empty"><div class="ico">🌱</div><b>Empieza con tus cuentas</b><p class="mut">Agrega tu efectivo, bancos, ahorros, inversiones y deudas. Con eso la app calcula tu patrimonio en un solo número.</p><button class="btn" data-a="newAcc">Agregar primera cuenta</button></div>';
@@ -301,7 +328,7 @@ function vHome(){
   h+='<div class="card"><div class="row"><div><span class="mut small" style="font-weight:600">AHORRO POR EL MOMENTO</span><div class="big" style="font-size:28px">'+money(saveAmt())+'</div></div><button class="chip" data-a="savingSheet">Cambiar</button></div></div>';
   const disp=S.accounts.filter(q=>!TYPES[q.type].debt);
   if(disp.length)h+='<div class="card"><h2>Disponible por cuenta</h2>'+disp.map(q=>'<div class="row" style="padding:7px 0"><span>'+esc(TYPES[q.type].i+' '+q.name)+'</span><b class="'+(isLow(q)?'bad':'')+'">'+fmt(availBal(q),q.cur)+'</b></div>').join('')+(savAcc()?'<div class="row mut small" style="padding:7px 0;border-top:1px solid var(--line,rgba(128,128,128,.25))"><span>💰 Ahorro (aparte)</span><span>'+fmt(saveAmt(),'CRC')+'</span></div>':'')+'</div>';
-  h+='<div class="card"><h2>Evolución</h2>'+chartSvg()+'</div>';
+  h+=dailyCard();
   if(dues.length){
     h+='<div class="card"><h2>Próximos pagos</h2>';
     dues.slice(0,5).forEach(({a,n})=>{
