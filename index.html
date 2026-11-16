@@ -299,6 +299,8 @@ function vHome(){
   h+='<div class="big '+(t.n-saveAmt()<0?'bad':'')+'">'+money(t.n-saveAmt())+'</div>'+delta+'<div class="mut small" style="margin-top:4px">Sin contar el ahorro</div>';
   h+='<div class="cols"><div><span class="mut small">Activos</span><b class="good">'+money(t.a-saveAmt())+'</b></div><div><span class="mut small">Deudas</span><b class="'+(t.d>0?'bad':'')+'">'+money(t.d)+'</b></div></div></div>';
   h+='<div class="card"><div class="row"><div><span class="mut small" style="font-weight:600">AHORRO POR EL MOMENTO</span><div class="big" style="font-size:28px">'+money(saveAmt())+'</div></div><button class="chip" data-a="savingSheet">Cambiar</button></div></div>';
+  const disp=S.accounts.filter(q=>!TYPES[q.type].debt);
+  if(disp.length)h+='<div class="card"><h2>Disponible por cuenta</h2>'+disp.map(q=>'<div class="row" style="padding:7px 0"><span>'+esc(TYPES[q.type].i+' '+q.name)+'</span><b class="'+(isLow(q)?'bad':'')+'">'+fmt(availBal(q),q.cur)+'</b></div>').join('')+(savAcc()?'<div class="row mut small" style="padding:7px 0;border-top:1px solid var(--line,rgba(128,128,128,.25))"><span>💰 Ahorro (aparte)</span><span>'+fmt(saveAmt(),'CRC')+'</span></div>':'')+'</div>';
   h+='<div class="card"><h2>Evolución</h2>'+chartSvg()+'</div>';
   if(dues.length){
     h+='<div class="card"><h2>Próximos pagos</h2>';
