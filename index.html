@@ -368,7 +368,7 @@ function histItems(mk){
   if(all||hFilter==='adj')S.adjust.forEach(j=>{
     if(!j.date.startsWith(mk)||(hAcc&&j.acc!==hAcc))return;
     const a=S.accounts.find(q=>q.id===j.acc);
-    out.push({id:j.id,date:j.date,t:j.time||'',ico:'✏️',title:'Ajuste de saldo',sub:(a?a.name:'')+(j.time?' · 🕐 '+j.time:''),amt:(j.delta>0?'+':'−')+fmt(Math.abs(j.delta),j.cur),cls:j.delta>0?'good':'bad',act:''});
+    out.push({id:j.id,date:j.date,t:j.time||'',ico:'✏️',title:'Ajuste de saldo',sub:(a?a.name:'')+(j.time?' · 🕐 '+j.time:''),amt:(j.delta>0?'+':'−')+fmt(Math.abs(j.delta),j.cur),cls:j.delta>0?'good':'bad',act:'delAdjust'});
   });
   return out.sort((a,b)=>b.date.localeCompare(a.date)||(b.t||'').localeCompare(a.t||'')||b.id.localeCompare(a.id));
 }
@@ -388,7 +388,7 @@ function vExp(){
     if(it.date!==cur){cur=it.date;h+='<div class="small mut" style="margin:12px 0 2px;font-weight:600;text-transform:capitalize">'+dayLabel(it.date)+'</div>'}
     h+='<div class="item"'+(it.act?' data-a="'+it.act+'" data-id="'+it.id+'"':' style="cursor:default"')+'><div class="ico">'+it.ico+'</div><div class="grow"><b>'+esc(it.title)+'</b><span class="small mut">'+esc(it.sub)+'</span></div><div class="amt '+it.cls+'">'+it.amt+'</div></div>';
   });
-  return h+'<p class="mut small" style="margin:10px 0 0">Toca un gasto para editarlo, o una recarga o pago para deshacerlo.</p></div>';
+  return h+'<p class="mut small" style="margin:10px 0 0">Toca un gasto para editarlo, o una recarga, pago o ajuste para deshacerlo.</p></div>';
 }
 
 function vAcc(){
@@ -728,6 +728,13 @@ const A={
     const x=S.transfers.find(q=>q.id===t.dataset.id);
     if(!x||!confirm('¿Deshacer esta transferencia? El dinero vuelve a la cuenta de origen.'))return;
     applyTransfer(x,-1);S.transfers=S.transfers.filter(q=>q.id!==x.id);save();render();toast('Transferencia deshecha');
+  },
+  delAdjust:t=>{
+    const j=S.adjust.find(q=>q.id===t.dataset.id),a=j&&S.accounts.find(q=>q.id===j.acc);
+    if(!j)return;
+    if(!a){S.adjust=S.adjust.filter(q=>q.id!==j.id);save();render();return}
+    if(!confirm('¿Deshacer este ajuste? El saldo de '+a.name+' vuelve a '+fmt(round2(a.balance-j.delta),a.cur)+'.'))return;
+    a.balance=round2(a.balance-j.delta);S.adjust=S.adjust.filter(q=>q.id!==j.id);snap();save();render();toast('Ajuste deshecho');
   },
   editAcc:t=>{const a=S.accounts.find(q=>q.id===t.dataset.id);if(a)accountSheet(a)},
   payDebt:t=>paySheet(t.dataset.id),
