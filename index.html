@@ -88,6 +88,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const pad=n=>String(n).padStart(2,'0');
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
+const nowT=()=>{const d=new Date();return pad(d.getHours())+':'+pad(d.getMinutes())};
 const norm=s=>String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();
 const round2=n=>Math.round(n*100)/100;
 const clone=o=>JSON.parse(JSON.stringify(o));
@@ -216,7 +217,7 @@ function saveTransfer(){
   const amt=parseAmount($('#t-amt').value);
   if(!from||!to||from.id===to.id){toast('Elige dos cuentas distintas');return}
   if(!(amt>0)){toast('Escribe un monto mayor a 0');return}
-  const t={id:uid(),date:$('#t-date').value||today(),from:from.id,to:to.id,amount:round2(amt),cur:to.cur};
+  const t={id:uid(),date:$('#t-date').value||today(),time:nowT(),from:from.id,to:to.id,amount:round2(amt),cur:to.cur};
   applyTransfer(t,1);S.transfers.push(t);
   save();closeSheet();render();toast('Listo: '+fmt(t.amount,t.cur)+' de '+from.name+' a '+to.name);
 }
@@ -357,19 +358,19 @@ function histItems(mk){
   if(all||hFilter==='exp')S.expenses.forEach(e=>{
     if(!e.date.startsWith(mk)||(hAcc&&e.accId!==hAcc))return;
     const a=S.accounts.find(q=>q.id===e.accId);
-    out.push({id:e.id,date:e.date,ico:CATS[e.cat].i,title:e.desc,sub:CATS[e.cat].n+(a?' · '+a.name:' · ⚠️ sin cuenta')+(e.rec?' · 🔁':''),amt:'−'+fmt(e.amount,e.cur),cls:'',act:'editExp'});
+    out.push({id:e.id,date:e.date,t:e.time||'',ico:CATS[e.cat].i,title:e.desc,sub:CATS[e.cat].n+(a?' · '+a.name:' · ⚠️ sin cuenta')+(e.rec?' · 🔁':'')+(e.time?' · 🕐 '+e.time:''),amt:'−'+fmt(e.amount,e.cur),cls:'',act:'editExp'});
   });
   if(all||hFilter==='tr')S.transfers.forEach(t=>{
     if(!t.date.startsWith(mk)||(hAcc&&t.from!==hAcc&&t.to!==hAcc))return;
     const o=S.accounts.find(q=>q.id===t.to),pago=t.kind==='pago'||(o&&TYPES[o.type].debt);
-    out.push({id:t.id,date:t.date,ico:pago?'💳':'↔️',title:trLabel(t),sub:pago?'Pago de tarjeta o deuda':'Recarga entre cuentas',amt:fmt(t.amount,t.cur),cls:'mut',act:'delTransfer'});
+    out.push({id:t.id,date:t.date,t:t.time||'',ico:pago?'💳':'↔️',title:trLabel(t),sub:(pago?'Pago de tarjeta o deuda':'Recarga entre cuentas')+(t.time?' · 🕐 '+t.time:''),amt:fmt(t.amount,t.cur),cls:'mut',act:'delTransfer'});
   });
   if(all||hFilter==='adj')S.adjust.forEach(j=>{
     if(!j.date.startsWith(mk)||(hAcc&&j.acc!==hAcc))return;
     const a=S.accounts.find(q=>q.id===j.acc);
-    out.push({id:j.id,date:j.date,ico:'✏️',title:'Ajuste de saldo',sub:a?a.name:'',amt:(j.delta>0?'+':'−')+fmt(Math.abs(j.delta),j.cur),cls:j.delta>0?'good':'bad',act:''});
+    out.push({id:j.id,date:j.date,t:j.time||'',ico:'✏️',title:'Ajuste de saldo',sub:(a?a.name:'')+(j.time?' · 🕐 '+j.time:''),amt:(j.delta>0?'+':'−')+fmt(Math.abs(j.delta),j.cur),cls:j.delta>0?'good':'bad',act:''});
   });
-  return out.sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id));
+  return out.sort((a,b)=>b.date.localeCompare(a.date)||(b.t||'').localeCompare(a.t||'')||b.id.localeCompare(a.id));
 }
 function vExp(){
   const items=histItems(expMonth);
@@ -449,7 +450,7 @@ function expenseSheet(e,pre){
   const p=Object.assign({},pre||{}),catSet=!!p.catSet;delete p.catSet;
   const card=p.card||'';delete p.card;
   const raw=p.raw||null;delete p.raw;
-  const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||(S.accounts.find(a=>!TYPES[a.type].debt)||{}).id||'',rec:false},e?clone(e):{},p);
+  const x=Object.assign({id:uid(),date:today(),desc:'',amount:'',time:e?'':nowT(),cur:S.settings.cur||'CRC',cat:'otros',accId:S.settings.lastAcc||(S.accounts.find(a=>!TYPES[a.type].debt)||{}).id||'',rec:false},e?clone(e):{},p);
   if(!S.accounts.find(a=>a.id===x.accId))x.accId='';
   D={x,orig:e?clone(e):null,catManual:!!e||catSet,card};
   const fr=Object.entries(S.merchants).sort((a,b)=>b[1].n-a[1].n).slice(0,6);
@@ -465,6 +466,7 @@ function expenseSheet(e,pre){
   h+=field('Cuenta','<select id="x-acc">'+accOptions(x.accId,true)+'</select>');
   if(card&&!x.accId)h+='<p class="small warn" style="margin:-4px 0 12px">No reconocí la tarjeta «'+esc(card)+'». Elige la cuenta y la próxima vez la recuerdo.</p>';
   h+=field('Fecha','<input type="date" id="x-date" value="'+esc(x.date)+'">');
+  h+=field('Hora (opcional)','<input type="time" id="x-time" value="'+esc(x.time||'')+'">');
   h+='<div class="sw"><div><b>Gasto recurrente</b><div class="small mut">Nómina, alquiler, suscripciones…</div></div><input type="checkbox" id="x-rec"'+(x.rec?' checked':'')+'></div>';
   h+='<button class="btn" data-a="saveExp">Guardar</button>';
   if(e)h+='<button class="btn del" data-a="delExp">Eliminar gasto</button>';
@@ -480,7 +482,7 @@ function saveExp(){
   const x=D.x,amt=parseAmount($('#x-amt').value);
   if(!(amt>0)){toast('Escribe un importe mayor a 0');return}
   x.amount=amt;x.desc=$('#x-desc').value.trim()||CATS[x.cat].n;
-  x.date=$('#x-date').value||today();x.accId=$('#x-acc').value;x.rec=$('#x-rec').checked;
+  x.date=$('#x-date').value||today();x.time=$('#x-time').value||'';x.accId=$('#x-acc').value;x.rec=$('#x-rec').checked;
   if(!x.accId&&S.accounts.length&&!confirm('Sin cuenta no se descuenta de ningún saldo. ¿Guardar así?'))return;
   if(D.card&&x.accId)S.cardMap[norm(D.card)]=x.accId;
   if(D.orig)applyExp(D.orig,-1);
@@ -555,7 +557,7 @@ function savePay(){
   const a=S.accounts.find(q=>q.id===D.id),amt=parseAmount($('#p-amt').value);
   if(!a||!(amt>0)){toast('Escribe el monto pagado');return}
   const f=S.accounts.find(q=>q.id===$('#p-from').value);
-  const t={id:uid(),date:today(),from:f?f.id:'',to:a.id,amount:round2(amt),cur:a.cur,kind:'pago'};
+  const t={id:uid(),date:today(),time:nowT(),from:f?f.id:'',to:a.id,amount:round2(amt),cur:a.cur,kind:'pago'};
   applyTransfer(t,1);S.transfers.push(t);
   a.paidMonth=today().slice(0,7);
   save();closeSheet();render();toast('Pago registrado');
@@ -591,7 +593,7 @@ function bankAcc(b){
 }
 function trCommit(t){
   const f=bankAcc(t.from),o=bankAcc(t.to);if(!f||!o)return false;
-  const x={id:uid(),date:t.d||today(),from:f.id,to:o.id,amount:round2(convert(t.amount,t.cur||'CRC',o.cur)),cur:o.cur};
+  const x={id:uid(),date:t.d||today(),time:t.t||'',from:f.id,to:o.id,amount:round2(convert(t.amount,t.cur||'CRC',o.cur)),cur:o.cur};
   applyTransfer(x,1);S.transfers.push(x);S.mailSeen[t.ref]=1;return true;
 }
 function mailTr(list){
@@ -617,7 +619,7 @@ function cleanM(s){
 }
 function mailCommit(it,accId){
   const desc=cleanM(it.desc)||'Compra';
-  const x={id:uid(),date:it.d||today(),desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId,rec:false,ref:it.ref};
+  const x={id:uid(),date:it.d||today(),time:it.t||'',desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId,rec:false,ref:it.ref};
   applyExp(x,1);S.expenses.push(x);S.mailSeen[it.ref]=1;
   if(it.last4&&accId)S.mailCards[it.last4]=accId;
 }
@@ -691,11 +693,11 @@ const A={
     const a=bankAcc(it.bank);if(!a){toast('No encuentro la cuenta '+it.bank);return}
     if(it.dir==='out'){
       const desc=cleanM(it.desc)||'Pago SINPE';
-      const x={id:uid(),date:it.d||today(),desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId:a.id,rec:false,ref:it.ref};
+      const x={id:uid(),date:it.d||today(),time:it.t||'',desc,amount:it.amount,cur:it.cur==='USD'?'USD':'CRC',cat:guessCat(desc)||'otros',accId:a.id,rec:false,ref:it.ref};
       applyExp(x,1);S.expenses.push(x);
     }else{
       const v=round2(convert(it.amount,it.cur||'CRC',a.cur));
-      a.balance=round2(a.balance+v);S.adjust.push({id:uid(),date:it.d||today(),acc:a.id,delta:v,cur:a.cur});
+      a.balance=round2(a.balance+v);S.adjust.push({id:uid(),date:it.d||today(),time:it.t||'',acc:a.id,delta:v,cur:a.cur});
     }
     S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();
     const crc=convert(it.amount,it.cur||'CRC','CRC');
@@ -706,7 +708,7 @@ const A={
     const me=bankAcc(it.bank),sel=$('#td-'+t.dataset.i),other=sel&&S.accounts.find(q=>q.id===sel.value);
     if(!me||!other){toast('Elige la otra cuenta');return}
     const out=it.dir==='out';
-    const x={id:uid(),date:it.d||today(),from:out?me.id:other.id,to:out?other.id:me.id,amount:0,cur:'',};
+    const x={id:uid(),date:it.d||today(),time:it.t||'',from:out?me.id:other.id,to:out?other.id:me.id,amount:0,cur:'',};
     const tgt=out?other:me;x.cur=tgt.cur;x.amount=round2(convert(it.amount,it.cur||'CRC',tgt.cur));
     applyTransfer(x,1);S.transfers.push(x);S.mailSeen[it.ref]=1;S.mailQ.splice(+t.dataset.i,1);save();render();mailSheet();toast('Recarga registrada');
   },
